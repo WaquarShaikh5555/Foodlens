@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -39,6 +41,23 @@ jobs:
         run: |
           npm install -g eas-cli
           eas whoami || { echo "::error::EAS login failed. Check that your EXPO_TOKEN secret is set correctly in GitHub."; exit 1; }
+
+      - name: Ensure the EAS project is linked and accessible
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -e
+          if eas project:info --json > /tmp/project.json 2>/dev/null; then
+            echo "Linked EAS project: $(node -e \"const p=require('/tmp/project.json');console.log(p.id||'')\")"
+            exit 0
+          fi
+          echo "Project not accessible with this token — creating a fresh one under the authenticated account..."
+          if eas init --force --json --non-interactive > /tmp/init.json 2>/tmp/init.err; then
+            echo "Created and linked new EAS project: $(node -e \"const p=require('/tmp/init.json');console.log((p&&(p.id||p.projectId||p.identifier))||'')\")"
+          else
+            cat /tmp/init.err >&2
+            exit 1
+          fi
 
       - name: Trigger EAS build (APK)
         env:
