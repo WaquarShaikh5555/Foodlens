@@ -1,86 +1,18 @@
-name: Build APK (EAS)
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build-apk:
-    name: Build Android APK
-    runs-on: ubuntu-latest
-    concurrency:
-      group: eas-build
-      cancel-in-progress: false
-    timeout-minutes: 55
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Verify required secrets are set
-        run: |
-          if [ -z "$EXPO_TOKEN" ]; then
-            echo "::error::EXPO_TOKEN secret is not configured. Add an Expo access token as a repository secret named EXPO_TOKEN (Settings -> Secrets and variables -> Actions)."
-            exit 1
-          fi
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Check EAS CLI login
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          npm install -g eas-cli
-          eas whoami || { echo "::error::EAS login failed. Check that your EXPO_TOKEN secret is set correctly in GitHub."; exit 1; }
-
       - name: Ensure the EAS project is linked and accessible
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -e
           if eas project:info --json > /tmp/project.json 2>/dev/null; then
-            echo "Linked EAS project: $(node -e \"const p=require('/tmp/project.json');console.log(p.id||'')\")"
+            PROJECT_ID=$(node -e 'const p=require("/tmp/project.json");console.log(p.id||"")' 2>/dev/null || true)
+            echo "Linked EAS project: $PROJECT_ID"
             exit 0
           fi
           echo "Project not accessible with this token — creating a fresh one under the authenticated account..."
           if eas init --force --json --non-interactive > /tmp/init.json 2>/tmp/init.err; then
-            echo "Created and linked new EAS project: $(node -e \"const p=require('/tmp/init.json');console.log((p&&(p.id||p.projectId||p.identifier))||'')\")"
+            NEW_PROJECT_ID=$(node -e 'const p=require("/tmp/init.json");console.log((p&&(p.id||p.projectId||p.identifier))||"")' 2>/dev/null || true)
+            echo "Created and linked new EAS project: $NEW_PROJECT_ID"
           else
             cat /tmp/init.err >&2
             exit 1
           fi
-
-      - name: Trigger EAS build (APK)
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas build --platform android --profile apk --non-interactive --wait
-
-      - name: Download the APK
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          URL=$(eas build:list --platform android --status finished --limit 1 --json --non-interactive | \
-            node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const b=JSON.parse(s)[0];if(!b){console.error('No finished build found');process.exit(1)}console.log(b.artifacts?.buildUrl||'')})")
-          if [ -z "$URL" ]; then
-            echo "::error::Could not resolve the APK download URL from the finished build."
-            exit 1
-          fi
-          echo "Downloading APK from: $URL"
-          curl -L -o foodlens.apk "$URL"
-          ls -lh foodlens.apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: foodlens-apk
-          path: foodlens.apk
-          if-no-files-found: error
