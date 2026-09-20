@@ -30,7 +30,6 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "CAMERA",
         "android.permission.CAMERA"
       ]
     },

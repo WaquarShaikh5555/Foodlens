@@ -179,7 +179,7 @@ const styles = StyleSheet.create({
   camFallbackText: { color: '#B7C9BD', textAlign: 'center', marginTop: 10, fontSize: 13, lineHeight: 18 },
   permBtn: { marginTop: 12, backgroundColor: '#2ECC71', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
   permBtnText: { color: '#fff', fontWeight: '800' },
-  overlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  overlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   reticle: { width: 230, height: 140, position: 'relative' },
   corner: { position: 'absolute', width: 28, height: 28, borderColor: '#2ECC71' },
   tl: { top: 0, left: 0, borderTopWidth: 4, borderLeftWidth: 4, borderTopLeftRadius: 10 },
