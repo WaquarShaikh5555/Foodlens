@@ -23,8 +23,54 @@ jobs:
           node-version: 22
           cache: npm
 
+      # npm ci (not npm install) so the committed lockfile decides the versions.
+      # Drifting caret ranges are how we ended up with react-native-reanimated 4.6
+      # without its required react-native-worklets package.
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      # Everything below runs before we spend an EAS build slot, so broken
+      # dependency trees fail in seconds with an actionable message instead of
+      # "Gradle build failed with unknown error" ten minutes later.
+      - name: Preflight - native dependency sanity
+        run: |
+          set -e
+          node -e '
+            const fs = require("fs");
+            const read = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
+            const installed = (name) => {
+              try { return read(`node_modules/${name}/package.json`).version; }
+              catch { return null; }
+            };
+            const reanimated = installed("react-native-reanimated");
+            const worklets = installed("react-native-worklets");
+            console.log(`react-native-reanimated: ${reanimated ?? "not installed"}`);
+            console.log(`react-native-worklets:   ${worklets ?? "not installed"}`);
+            if (reanimated && Number(reanimated.split(".")[0]) >= 4 && !worklets) {
+              console.error("::error::Reanimated 4+ requires the separate react-native-worklets package. Without it the Android Gradle configuration aborts with \"[Reanimated] `react-native-worklets` library not found\". Run: npx expo install react-native-worklets");
+              process.exit(1);
+            }
+          '
+          # This is the exact check the Reanimated Gradle task runs (assertWorkletsVersionTask).
+          if [ -f node_modules/react-native-reanimated/scripts/validate-worklets-build.js ]; then
+            (cd node_modules/react-native-reanimated/android && node ../scripts/validate-worklets-build.js)
+          fi
+
+      - name: Preflight - versions expected by the installed Expo SDK
+        # Advisory: needs network access to the Expo API. Mismatches are printed
+        # as warnings rather than failing the build.
+        continue-on-error: true
+        run: npx expo install --check
+
+      - name: Preflight - TypeScript
+        run: npm run typecheck
+
+      - name: Preflight - bundle Android JS with Metro
+        # Mirrors :app:createBundleReleaseJsAndAssets, the JS half of the Gradle build.
+        run: npx expo export --platform android --output-dir /tmp/preflight-export
+
+      - name: Install EAS CLI
+        run: npm install -g eas-cli@24
 
       - name: Verify required secrets are set
         run: |
@@ -38,9 +84,7 @@ jobs:
       - name: Check EAS CLI login
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          npm install -g eas-cli
-          eas whoami || { echo "::error::EAS login failed. Check that your EXPO_TOKEN secret is set correctly in GitHub."; exit 1; }
+        run: eas whoami || { echo "::error::EAS login failed. Check that your EXPO_TOKEN secret is set correctly in GitHub."; exit 1; }
 
       - name: Ensure the EAS project is linked and accessible
         env:
@@ -64,7 +108,7 @@ jobs:
       - name: Trigger EAS build (APK)
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas build --platform android --profile apk --non-interactive --wait
+        run: eas build --platform android --profile apk --non-interactive --wait 2>&1 | tee eas-build.log
 
       - name: Download the APK
         env:
@@ -86,3 +130,14 @@ jobs:
           name: foodlens-apk
           path: foodlens.apk
           if-no-files-found: error
+
+      - name: Report failure diagnostics
+        if: failure()
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          echo "Build URL from this run:"
+          grep -Eo 'https://expo.dev/[^ ]+/builds/[a-f0-9-]+' eas-build.log 2>/dev/null | tail -1 || true
+          echo "Most recent Android builds for this project:"
+          eas build:list --platform android --limit 3 --non-interactive || true
+          echo "Open the failing build and expand the 'Run gradlew' phase for the Gradle error."
